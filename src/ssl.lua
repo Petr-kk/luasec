@@ -1,7 +1,7 @@
 ------------------------------------------------------------------------------
--- LuaSec 0.7
+-- LuaSec 0.9
 --
--- Copyright (C) 2006-2018 Bruno Silvestre
+-- Copyright (C) 2006-2019 Bruno Silvestre
 --
 ------------------------------------------------------------------------------
 
@@ -112,7 +112,12 @@ local function newcontext(cfg)
       succ, msg = context.setcipher(ctx, cfg.ciphers)
       if not succ then return nil, msg end
    end
-   -- Set the verification options
+   -- Set SSL cipher suites
+   if cfg.ciphersuites then
+      succ, msg = context.setciphersuites(ctx, cfg.ciphersuites)
+      if not succ then return nil, msg end
+   end
+    -- Set the verification options
    succ, msg = optexec(context.setverify, cfg.verify, ctx)
    if not succ then return nil, msg end
    -- Set SSL options
@@ -196,6 +201,10 @@ local function newcontext(cfg)
       if not succ then return nil, msg end
    end
 
+   if config.capabilities.dane and cfg.dane then
+      context.setdane(ctx)
+   end
+
    return ctx
 end
 
@@ -262,8 +271,9 @@ core.setmethod("info", info)
 --
 
 local _M = {
-  _VERSION        = "0.7",
+  _VERSION        = "0.9",
   _COPYRIGHT      = core.copyright(),
+  config          = config,
   loadcertificate = x509.load,
   newcontext      = newcontext,
   wrap            = wrap,

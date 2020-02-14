@@ -1,7 +1,7 @@
 /*--------------------------------------------------------------------------
- * LuaSec 0.7
+ * LuaSec 0.9
  *
- * Copyright (C) 2006-2018 Bruno Silvestre.
+ * Copyright (C) 2006-2019 Bruno Silvestre.
  *
  *--------------------------------------------------------------------------*/
 
@@ -14,14 +14,14 @@
  */
 LSEC_API int luaopen_ssl_config(lua_State *L)
 {
-  ssl_option_t *opt;
+  lsec_ssl_option_t *opt;
 
   lua_newtable(L);
 
   // Options
   lua_pushstring(L, "options");
   lua_newtable(L);
-  for (opt = ssl_options; opt->name; opt++) {
+  for (opt = lsec_get_ssl_options(); opt->name; opt++) {
     lua_pushstring(L, opt->name);
     lua_pushboolean(L, 1);
     lua_rawset(L, -3);
@@ -41,7 +41,7 @@ LSEC_API int luaopen_ssl_config(lua_State *L)
   lua_pushstring(L, "tlsv1_2");
   lua_pushboolean(L, 1);
   lua_rawset(L, -3);
-#if defined(TLS1_3_VERSION)
+#ifdef TLS1_3_VERSION
   lua_pushstring(L, "tlsv1_3");
   lua_pushboolean(L, 1);
   lua_rawset(L, -3);
@@ -73,6 +73,13 @@ LSEC_API int luaopen_ssl_config(lua_State *L)
   lua_pushstring(L, "alpn");
   lua_pushboolean(L, 1);
   lua_rawset(L, -3);
+
+#ifdef LSEC_ENABLE_DANE
+  // DANE
+  lua_pushstring(L, "dane");
+  lua_pushboolean(L, 1);
+  lua_rawset(L, -3);
+#endif
 
 #ifndef OPENSSL_NO_EC
   lua_pushstring(L, "curves_list");

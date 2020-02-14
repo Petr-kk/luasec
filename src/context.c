@@ -1,9 +1,9 @@
 /*--------------------------------------------------------------------------
- * LuaSec 0.7
+ * LuaSec 0.9
  *
- * Copyright (C) 2014-2018 Kim Alvefur, Paul Aurich, Tobias Markmann, 
+ * Copyright (C) 2014-2019 Kim Alvefur, Paul Aurich, Tobias Markmann, 
  *                         Matthew Wild.
- * Copyright (C) 2006-2018 Bruno Silvestre.
+ * Copyright (C) 2006-2019 Bruno Silvestre.
  *
  *--------------------------------------------------------------------------*/
 
@@ -17,10 +17,12 @@
 #include <openssl/err.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
+#include <openssl/dh.h>
 
 #include <lua.h>
 #include <lauxlib.h>
 
+#include "compat.h"
 #include "context.h"
 #include "options.h"
 
@@ -49,8 +51,8 @@ static p_context testctx(lua_State *L, int idx)
  */
 static int set_option_flag(const char *opt, unsigned long *flag)
 {
-  ssl_option_t *p;
-  for (p = ssl_options; p->name; p++) {
+  lsec_ssl_option_t *p;
+  for (p = lsec_get_ssl_options(); p->name; p++) {
     if (!strcmp(opt, p->name)) {
       *flag |= p->code;
       return 1;
@@ -59,7 +61,7 @@ static int set_option_flag(const char *opt, unsigned long *flag)
   return 0;
 }
 
-#if (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x2070000fL) || (OPENSSL_VERSION_NUMBER < 0x1010000fL)
+#ifndef LSEC_API_OPENSSL_1_1_0
 /**
  * Find the protocol.
  */
@@ -331,7 +333,7 @@ static int create(lua_State *L)
       ERR_reason_error_string(ERR_get_error()));
     return 2;
   }
-#if ! ((defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x2070000fL) || (OPENSSL_VERSION_NUMBER < 0x1010000fL))
+#ifdef LSEC_API_OPENSSL_1_1_0
   SSL_CTX_set_min_proto_version(ctx->context, vmin);
   SSL_CTX_set_max_proto_version(ctx->context, vmax);
 #endif
@@ -436,10 +438,27 @@ static int set_cipher(lua_State *L)
   const char *list = luaL_checkstring(L, 2);
   if (SSL_CTX_set_cipher_list(ctx, list) != 1) {
     lua_pushboolean(L, 0);
-    lua_pushfstring(L, "error setting cipher list (%s)",
-      ERR_reason_error_string(ERR_get_error()));
+    lua_pushfstring(L, "error setting cipher list (%s)", ERR_reason_error_string(ERR_get_error()));
     return 2;
   }
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+/**
+ * Set the cipher suites.
+ */
+static int set_ciphersuites(lua_State *L)
+{
+#if defined(TLS1_3_VERSION)
+  SSL_CTX *ctx = lsec_checkcontext(L, 1);
+  const char *list = luaL_checkstring(L, 2);
+  if (SSL_CTX_set_ciphersuites(ctx, list) != 1) {
+    lua_pushboolean(L, 0);
+    lua_pushfstring(L, "error setting cipher list (%s)", ERR_reason_error_string(ERR_get_error()));
+    return 2;
+  }
+#endif
   lua_pushboolean(L, 1);
   return 1;
 }
@@ -550,12 +569,13 @@ static int set_dhparam(lua_State *L)
 static int set_curve(lua_State *L)
 {
   long ret;
+  EC_KEY *key = NULL;
   SSL_CTX *ctx = lsec_checkcontext(L, 1);
   const char *str = luaL_checkstring(L, 2);
 
   SSL_CTX_set_options(ctx, SSL_OP_SINGLE_ECDH_USE);
 
-  EC_KEY *key = lsec_find_ec_key(L, str);
+  key = lsec_find_ec_key(L, str);
 
   if (!key) {
     lua_pushboolean(L, 0);
@@ -594,7 +614,9 @@ static int set_curves_list(lua_State *L)
     return 2;
   }
 
+#if defined(LIBRESSL_VERSION_NUMBER) || !defined(LSEC_API_OPENSSL_1_1_0)
   (void)SSL_CTX_set_ecdh_auto(ctx, 1);
+#endif
 
   lua_pushboolean(L, 1);
   return 1;
@@ -685,30 +707,45 @@ static int set_alpn_cb(lua_State *L)
   return 1;
 }
 
+#if defined(LSEC_ENABLE_DANE)
+/*
+ * DANE
+ */
+static int set_dane(lua_State *L)
+{
+  int ret;
+  SSL_CTX *ctx = lsec_checkcontext(L, 1);
+  ret = SSL_CTX_dane_enable(ctx);
+  lua_pushboolean(L, (ret > 0));
+  return 1;
+}
+#endif
 
 /**
  * Package functions
  */
 static luaL_Reg funcs[] = {
-  {"create",       create},
-  {"locations",    load_locations},
-  {"loadcert",     load_cert},
-  {"loadkey",      load_key},
-  {"checkkey",     check_key},
-  {"setalpn",      set_alpn},
-  {"setalpncb",    set_alpn_cb},
-  {"setcipher",    set_cipher},
-  {"setdepth",     set_depth},
-  {"setdhparam",   set_dhparam},
-  {"setverify",    set_verify},
-  {"setoptions",   set_options},
-  {"setmode",      set_mode},
-
+  {"create",          create},
+  {"locations",       load_locations},
+  {"loadcert",        load_cert},
+  {"loadkey",         load_key},
+  {"checkkey",        check_key},
+  {"setalpn",         set_alpn},
+  {"setalpncb",       set_alpn_cb},
+  {"setcipher",       set_cipher},
+  {"setciphersuites", set_ciphersuites},
+  {"setdepth",        set_depth},
+  {"setdhparam",      set_dhparam},
+  {"setverify",       set_verify},
+  {"setoptions",      set_options},
+  {"setmode",         set_mode},
 #if !defined(OPENSSL_NO_EC)
-  {"setcurve",      set_curve},
-  {"setcurveslist", set_curves_list},
+  {"setcurve",        set_curve},
+  {"setcurveslist",   set_curves_list},
 #endif
-
+#if defined(LSEC_ENABLE_DANE)
+  {"setdane",         set_dane},
+#endif
   {NULL, NULL}
 };
 
@@ -809,6 +846,7 @@ static int meth_set_verify_ext(lua_State *L)
  * Context metamethods.
  */
 static luaL_Reg meta[] = {
+  {"__close",    meth_destroy},
   {"__gc",       meth_destroy},
   {"__tostring", meth_tostring},
   {NULL, NULL}

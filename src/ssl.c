@@ -1,9 +1,9 @@
 /*--------------------------------------------------------------------------
- * LuaSec 0.7
+ * LuaSec 0.9
  *
- * Copyright (C) 2014-2018 Kim Alvefur, Paul Aurich, Tobias Markmann, 
+ * Copyright (C) 2014-2019 Kim Alvefur, Paul Aurich, Tobias Markmann, 
  *                         Matthew Wild.
- * Copyright (C) 2006-2018 Bruno Silvestre.
+ * Copyright (C) 2006-2019 Bruno Silvestre.
  *
  *--------------------------------------------------------------------------*/
 
@@ -18,6 +18,7 @@
 #include <openssl/x509v3.h>
 #include <openssl/x509_vfy.h>
 #include <openssl/err.h>
+#include <openssl/dh.h>
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -32,7 +33,7 @@
 #include "ssl.h"
 
 
-#if (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x2070000fL) || (OPENSSL_VERSION_NUMBER < 0x1010000fL)
+#ifndef LSEC_API_OPENSSL_1_1_0
 #define SSL_is_server(s) (s->server)
 #define SSL_up_ref(ssl)  CRYPTO_add(&(ssl)->references, 1, CRYPTO_LOCK_SSL)
 #define X509_up_ref(c)   CRYPTO_add(&c->references, 1, CRYPTO_LOCK_X509)
@@ -818,13 +819,41 @@ static int meth_getalpn(lua_State *L)
 
 static int meth_copyright(lua_State *L)
 {
-  lua_pushstring(L, "LuaSec 0.7 - Copyright (C) 2006-2018 Bruno Silvestre, UFG"
+  lua_pushstring(L, "LuaSec 0.9 - Copyright (C) 2006-2019 Bruno Silvestre, UFG"
 #if defined(WITH_LUASOCKET)
                     "\nLuaSocket 3.0-RC1 - Copyright (C) 2004-2013 Diego Nehab"
 #endif
   );
   return 1;
 }
+
+#if defined(LSEC_ENABLE_DANE)
+static int meth_dane(lua_State *L)
+{
+  int ret;
+  p_ssl ssl = (p_ssl)luaL_checkudata(L, 1, "SSL:Connection");
+  ret = SSL_dane_enable(ssl->ssl, luaL_checkstring(L, 2));
+  lua_pushboolean(L, (ret > 0));
+  return 1;
+}
+
+static int meth_tlsa(lua_State *L)
+{
+  int ret;
+  size_t len;
+  p_ssl ssl = (p_ssl)luaL_checkudata(L, 1, "SSL:Connection");
+  uint8_t usage = (uint8_t)luaL_checkinteger(L, 2);
+  uint8_t selector = (uint8_t)luaL_checkinteger(L, 3);
+  uint8_t mtype = (uint8_t)luaL_checkinteger(L, 4);
+  unsigned char *data = (unsigned char*)luaL_checklstring(L, 5, &len);
+
+  ERR_clear_error();
+  ret = SSL_dane_tlsa_add(ssl->ssl, usage, selector, mtype, data, len);
+  lua_pushboolean(L, (ret > 0));
+
+  return 1;
+}
+#endif
 
 /*---------------------------------------------------------------------------*/
 
@@ -850,6 +879,10 @@ static luaL_Reg methods[] = {
   {"settimeout",          meth_settimeout},
   {"sni",                 meth_sni},
   {"want",                meth_want},
+#if defined(LSEC_ENABLE_DANE)
+  {"setdane",             meth_dane},
+  {"settlsa",             meth_tlsa},
+#endif
   {NULL,                  NULL}
 };
 
@@ -857,6 +890,7 @@ static luaL_Reg methods[] = {
  * SSL metamethods.
  */
 static luaL_Reg meta[] = {
+  {"__close",    meth_destroy},
   {"__gc",       meth_destroy},
   {"__tostring", meth_tostring},
   {NULL, NULL}
@@ -913,6 +947,7 @@ static int luaclose_ssl_core(lua_State *L)
  */
 LSEC_API int luaopen_ssl_core(lua_State *L)
 {
+#ifndef LSEC_API_OPENSSL_1_1_0
   /* Initialize SSL */
   if (!SSL_library_init()) {
     lua_pushstring(L, "unable to initialize SSL library");
@@ -920,6 +955,7 @@ LSEC_API int luaopen_ssl_core(lua_State *L)
   }
   OpenSSL_add_all_algorithms();
   SSL_load_error_strings();
+#endif
 
 #if defined(WITH_LUASOCKET)
   /* Initialize internal library */
