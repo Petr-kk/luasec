@@ -982,7 +982,7 @@ LSEC_API int luaopen_ssl_core(lua_State *L)
   lua_setfield(L, -2, "__guard");
 
   lua_pushstring(L, "SOCKET_INVALID");
-  lua_pushnumber(L, SOCKET_INVALID);
+  lua_pushinteger(L, SOCKET_INVALID);
   lua_rawset(L, -3);
 
   return 1;
